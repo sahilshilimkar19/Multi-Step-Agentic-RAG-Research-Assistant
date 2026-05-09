@@ -8,7 +8,7 @@ import structlog
 from langchain_core.messages import AIMessage, HumanMessage, SystemMessage
 
 from agentic_rag.config import get_settings
-from agentic_rag.llm import get_llm
+from agentic_rag.llm import UsageCollector, get_llm
 from agentic_rag.prompts import SYNTHESIZER_SYSTEM, SYNTHESIZER_USER
 from agentic_rag.state import ResearchState
 
@@ -27,6 +27,7 @@ def synthesizer_node(state: ResearchState) -> dict[str, Any]:
 def _synthesizer_body(state: ResearchState) -> dict[str, Any]:
     settings = get_settings()
     llm = get_llm(settings.synthesizer_model, temperature=0.2)
+    usage = UsageCollector()
 
     relevant = [
         d
@@ -55,11 +56,13 @@ def _synthesizer_body(state: ResearchState) -> dict[str, Any]:
                     documents=docs_text or "No relevant documents collected.",
                 )
             ),
-        ]
+        ],
+        config={"callbacks": [usage]},
     )
     report = resp.content if isinstance(resp.content, str) else str(resp.content)
     return {
         "final_report": report,
         "next_action": "end",
         "messages": [AIMessage(content="Report drafted.")],
+        "token_usage": usage.as_dict(),
     }

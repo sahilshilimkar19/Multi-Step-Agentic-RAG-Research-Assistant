@@ -22,6 +22,7 @@ from anthropic import (
     RateLimitError as AnthropicRateLimitError,
 )
 from langchain_anthropic import ChatAnthropic
+from langchain_core.callbacks import BaseCallbackHandler
 from langchain_openai import ChatOpenAI
 from openai import (
     APIConnectionError as OpenAIAPIConnectionError,
@@ -86,6 +87,31 @@ class _RetryingChat(_RetryingRunnable):
 
     def with_structured_output(self, *args: Any, **kwargs: Any) -> _RetryingRunnable:
         return _RetryingRunnable(self._inner.with_structured_output(*args, **kwargs))
+
+
+class UsageCollector(BaseCallbackHandler):
+    """Accumulates input/output token usage from LLM responses.
+
+    Pass instances via `config={"callbacks": [collector]}` on .invoke()
+    to capture usage even from .with_structured_output() runnables (where
+    the AIMessage is consumed before the caller sees it).
+    """
+
+    def __init__(self) -> None:
+        self.input_tokens: int = 0
+        self.output_tokens: int = 0
+
+    def on_llm_end(self, response: Any, **_: Any) -> None:  # noqa: ANN401
+        for gen_list in getattr(response, "generations", []) or []:
+            for gen in gen_list:
+                msg = getattr(gen, "message", None)
+                usage = getattr(msg, "usage_metadata", None) if msg else None
+                if usage:
+                    self.input_tokens += int(usage.get("input_tokens", 0) or 0)
+                    self.output_tokens += int(usage.get("output_tokens", 0) or 0)
+
+    def as_dict(self) -> dict[str, int]:
+        return {"input_tokens": self.input_tokens, "output_tokens": self.output_tokens}
 
 
 def get_llm(model: str, temperature: float = 0.0) -> _RetryingChat:

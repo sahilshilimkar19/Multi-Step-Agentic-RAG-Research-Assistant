@@ -9,7 +9,7 @@ import structlog
 from langchain_core.messages import AIMessage, HumanMessage, SystemMessage
 
 from agentic_rag.config import get_settings
-from agentic_rag.llm import get_llm
+from agentic_rag.llm import UsageCollector, get_llm
 from agentic_rag.prompts import (
     PLANNER_SYSTEM,
     PLANNER_USER,
@@ -57,6 +57,8 @@ def planner_node(state: ResearchState) -> dict[str, Any]:
 def _planner_body(state: ResearchState, iteration: int) -> dict[str, Any]:
     settings = get_settings()
     llm = get_llm(settings.planner_model)
+    usage = UsageCollector()
+    cb_config = {"callbacks": [usage]}
 
     plan = state.get("research_plan") or []
 
@@ -69,12 +71,12 @@ def _planner_body(state: ResearchState, iteration: int) -> dict[str, Any]:
         ]
         try:
             structured_llm = llm.with_structured_output(PlannerOutput)
-            output: PlannerOutput = structured_llm.invoke(messages)
+            output: PlannerOutput = structured_llm.invoke(messages, config=cb_config)
             new_plan = output.plan or [state["original_query"]]
             new_queries = output.initial_queries or [state["original_query"]]
         except Exception as e:
             logger.warning("Planner structured output failed (%s); falling back to JSON", e)
-            resp = llm.invoke(messages)
+            resp = llm.invoke(messages, config=cb_config)
             data = _safe_json(
                 resp.content if isinstance(resp.content, str) else str(resp.content),
                 default={
@@ -89,6 +91,7 @@ def _planner_body(state: ResearchState, iteration: int) -> dict[str, Any]:
             "search_queries": new_queries,
             "next_action": "search",
             "messages": [AIMessage(content=f"Plan: {new_plan}")],
+            "token_usage": usage.as_dict(),
         }
 
     # Subsequent visits: route.
@@ -127,13 +130,13 @@ def _planner_body(state: ResearchState, iteration: int) -> dict[str, Any]:
     fallback_queries = uncovered[:3] or [state["original_query"]]
     try:
         structured_llm = llm.with_structured_output(RouterOutput)
-        router_output: RouterOutput = structured_llm.invoke(router_messages)
+        router_output: RouterOutput = structured_llm.invoke(router_messages, config=cb_config)
         next_action = router_output.next_action
         queries = router_output.queries or fallback_queries
         rationale = router_output.rationale
     except Exception as e:
         logger.warning("Router structured output failed (%s); falling back to JSON", e)
-        resp = llm.invoke(router_messages)
+        resp = llm.invoke(router_messages, config=cb_config)
         data = _safe_json(
             resp.content if isinstance(resp.content, str) else str(resp.content),
             default={
@@ -151,4 +154,5 @@ def _planner_body(state: ResearchState, iteration: int) -> dict[str, Any]:
         "next_action": next_action,
         "search_queries": queries,
         "messages": [AIMessage(content=f"Router: {rationale}")],
+        "token_usage": usage.as_dict(),
     }

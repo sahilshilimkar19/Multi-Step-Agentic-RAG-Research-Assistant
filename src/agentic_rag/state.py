@@ -8,6 +8,16 @@ from langgraph.graph.message import add_messages
 from pydantic import BaseModel, Field
 
 
+def add_usage(left: dict | None, right: dict | None) -> dict:
+    """Reducer that sums two {input_tokens, output_tokens} dicts."""
+    a = left or {}
+    b = right or {}
+    return {
+        "input_tokens": int(a.get("input_tokens", 0)) + int(b.get("input_tokens", 0)),
+        "output_tokens": int(a.get("output_tokens", 0)) + int(b.get("output_tokens", 0)),
+    }
+
+
 class GradedDocument(BaseModel):
     """A retrieved document after the grader has scored it."""
 
@@ -70,3 +80,6 @@ class ResearchState(TypedDict):
 
     # LangChain message history (streamable to UIs)
     messages: Annotated[list[BaseMessage], add_messages]
+
+    # Cumulative token usage across all node LLM calls
+    token_usage: Annotated[dict, add_usage]

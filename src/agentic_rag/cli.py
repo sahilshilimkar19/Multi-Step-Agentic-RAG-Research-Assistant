@@ -10,6 +10,7 @@ import typer
 from langgraph.checkpoint.sqlite import SqliteSaver
 from rich.console import Console
 from rich.markdown import Markdown
+from rich.table import Table
 
 from agentic_rag.config import get_settings
 from agentic_rag.graph import build_graph
@@ -25,6 +26,29 @@ def _setup_logging(level: str, json_output: bool) -> None:
 
 
 _RUNS_DIR = Path("runs")
+
+
+def _render_summary(state_values: dict) -> Table:
+    """Build a Rich table summarizing the run."""
+    iterations = state_values.get("iteration_count", 0)
+    raw_count = len(state_values.get("raw_documents") or [])
+    graded = state_values.get("graded_documents") or []
+    graded_count = len(graded)
+    relevant_count = sum(
+        1 for g in graded if getattr(g, "relevance_score", 0.0) >= 0.6 and getattr(g, "is_grounded", False)
+    )
+    usage = state_values.get("token_usage") or {}
+    in_tok = int(usage.get("input_tokens", 0))
+    out_tok = int(usage.get("output_tokens", 0))
+
+    table = Table(title="Run Summary", show_header=False, title_style="bold green")
+    table.add_column("metric", style="bold")
+    table.add_column("value")
+    table.add_row("Iterations", str(iterations))
+    table.add_row("Raw documents", str(raw_count))
+    table.add_row("Graded documents", f"{graded_count} ({relevant_count} relevant)")
+    table.add_row("Tokens", f"{in_tok:,} in / {out_tok:,} out")
+    return table
 
 
 def _save_report(thread_id: str, report: str) -> Path:
@@ -91,6 +115,7 @@ def research(
         "final_report": "",
         "next_action": "search",
         "messages": [],
+        "token_usage": {"input_tokens": 0, "output_tokens": 0},
     }
 
     with (
@@ -107,6 +132,8 @@ def research(
 
         final = graph.get_state(config)
         report = final.values.get("final_report", "")
+        console.rule("[bold green]Run Summary[/]")
+        console.print(_render_summary(final.values))
         if report:
             console.rule("[bold green]Final Report[/]")
             console.print(Markdown(report))
@@ -135,6 +162,8 @@ def resume(thread_id: str = typer.Argument(..., help="Thread ID from a prior run
 
         final = graph.get_state(config)
         report = final.values.get("final_report", "")
+        console.rule("[bold green]Run Summary[/]")
+        console.print(_render_summary(final.values))
         if report:
             console.rule("[bold green]Final Report[/]")
             console.print(Markdown(report))

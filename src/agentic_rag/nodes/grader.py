@@ -9,7 +9,7 @@ import structlog
 from langchain_core.messages import HumanMessage, SystemMessage
 
 from agentic_rag.config import get_settings
-from agentic_rag.llm import get_llm
+from agentic_rag.llm import UsageCollector, get_llm
 from agentic_rag.nodes.planner import _safe_json
 from agentic_rag.prompts import GRADER_SYSTEM, GRADER_USER
 from agentic_rag.state import GradedDocument, GraderOutput, ResearchState
@@ -19,7 +19,9 @@ logger = logging.getLogger(__name__)
 _MAX_GRADER_DOC_CHARS = 4000
 
 
-def _grade_one(llm, doc: dict, original_query: str) -> GradedDocument | None:
+def _grade_one(
+    llm, doc: dict, original_query: str, usage: UsageCollector | None = None
+) -> GradedDocument | None:
     messages = [
         SystemMessage(content=GRADER_SYSTEM),
         HumanMessage(
@@ -31,13 +33,14 @@ def _grade_one(llm, doc: dict, original_query: str) -> GradedDocument | None:
             )
         ),
     ]
+    cb_config = {"callbacks": [usage]} if usage is not None else {}
     score: float
     is_grounded: bool
     rationale: str
     try:
         try:
             structured_llm = llm.with_structured_output(GraderOutput)
-            output: GraderOutput = structured_llm.invoke(messages)
+            output: GraderOutput = structured_llm.invoke(messages, config=cb_config)
             score = max(0.0, min(1.0, float(output.relevance_score)))
             is_grounded = bool(output.is_grounded)
             rationale = output.rationale
@@ -47,7 +50,7 @@ def _grade_one(llm, doc: dict, original_query: str) -> GradedDocument | None:
                 doc.get("url"),
                 struct_err,
             )
-            resp = llm.invoke(messages)
+            resp = llm.invoke(messages, config=cb_config)
             text = resp.content if isinstance(resp.content, str) else str(resp.content)
             data = _safe_json(
                 text,
@@ -83,6 +86,7 @@ def grader_node(state: ResearchState) -> dict[str, Any]:
 def _grader_body(state: ResearchState) -> dict[str, Any]:
     settings = get_settings()
     llm = get_llm(settings.grader_model)
+    usage = UsageCollector()  # accumulated across all per-doc calls
 
     graded = state.get("graded_documents") or []
     already_graded = {d.url for d in graded}
@@ -96,7 +100,9 @@ def _grader_body(state: ResearchState) -> dict[str, Any]:
 
     new_grades: list[GradedDocument] = []
     with ThreadPoolExecutor(max_workers=8) as ex:
-        futures = [ex.submit(_grade_one, llm, d, state["original_query"]) for d in to_grade]
+        futures = [
+            ex.submit(_grade_one, llm, d, state["original_query"], usage) for d in to_grade
+        ]
         for fut in as_completed(futures):
             res = fut.result()
             if res is not None:
@@ -109,4 +115,7 @@ def _grader_body(state: ResearchState) -> dict[str, Any]:
     ]
     logger.info("Grader: %d/%d passed threshold", len(relevant), len(new_grades))
 
-    return {"graded_documents": graded + new_grades}
+    return {
+        "graded_documents": graded + new_grades,
+        "token_usage": usage.as_dict(),
+    }
