@@ -3,8 +3,8 @@ from __future__ import annotations
 
 import logging
 
-from langchain_community.tools.tavily_search import TavilySearchResults
 from langchain_core.tools import tool
+from langchain_tavily import TavilySearch
 from pydantic import BaseModel
 from tenacity import retry, stop_after_attempt, wait_exponential
 
@@ -20,8 +20,14 @@ class SearchResult(BaseModel):
 
 @retry(stop=stop_after_attempt(2), wait=wait_exponential(multiplier=1, min=1, max=4))
 def _tavily_search(query: str, max_results: int) -> list[dict]:
-    tavily = TavilySearchResults(max_results=max_results)
-    return tavily.invoke(query)
+    tavily = TavilySearch(max_results=max_results)
+    raw = tavily.invoke({"query": query})
+    # langchain-tavily returns a dict {"results": [...], ...} from .invoke()
+    if isinstance(raw, dict):
+        return raw.get("results", []) or []
+    if isinstance(raw, list):
+        return raw
+    return []
 
 
 def _ddg_search(query: str, max_results: int) -> list[dict]:
