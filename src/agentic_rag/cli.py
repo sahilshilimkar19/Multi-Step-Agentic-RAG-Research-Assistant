@@ -26,6 +26,17 @@ def _setup_logging(level: str) -> None:
     )
 
 
+_RUNS_DIR = Path("runs")
+
+
+def _save_report(thread_id: str, report: str) -> Path:
+    """Write the final report to runs/<thread_id>.md and return the path."""
+    _RUNS_DIR.mkdir(exist_ok=True)
+    path = _RUNS_DIR / f"{thread_id}.md"
+    path.write_text(report, encoding="utf-8")
+    return path
+
+
 def _render_update(node_name: str, update: dict) -> None:
     console.rule(f"[bold cyan]{node_name}[/]")
     if update.get("messages"):
@@ -98,9 +109,11 @@ def research(
         if report:
             console.rule("[bold green]Final Report[/]")
             console.print(Markdown(report))
+            saved = _save_report(tid, report)
+            console.print(f"\n[green]Saved report to[/] {saved}")
         else:
             console.print("[bold yellow]No report produced (run interrupted?)[/]")
-        console.print(f"\n[dim]Resume with:[/] agentic-rag resume {tid}")
+        console.print(f"[dim]Resume with:[/] agentic-rag resume {tid}")
 
 
 @app.command()
@@ -121,6 +134,8 @@ def resume(thread_id: str = typer.Argument(..., help="Thread ID from a prior run
         if report:
             console.rule("[bold green]Final Report[/]")
             console.print(Markdown(report))
+            saved = _save_report(thread_id, report)
+            console.print(f"\n[green]Saved report to[/] {saved}")
 
 
 @app.command("list-runs")
