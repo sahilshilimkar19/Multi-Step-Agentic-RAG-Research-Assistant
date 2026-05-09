@@ -89,6 +89,9 @@ def research(
     pdf: list[Path] | None = typer.Option(
         None, "--pdf", help="Pre-load PDF(s) into the corpus before planning"
     ),
+    review: bool = typer.Option(
+        False, "--review", help="Pause before synthesis to review the graded evidence"
+    ),
 ) -> None:
     """Run a new research task."""
     settings = get_settings()
@@ -118,17 +121,38 @@ def research(
         "token_usage": {"input_tokens": 0, "output_tokens": 0},
     }
 
+    interrupts = ["synthesizer"] if review else None
     with (
         SqliteSaver.from_conn_string(settings.checkpoint_db) as cp,
         structlog.contextvars.bound_contextvars(thread_id=tid),
     ):
-        graph = build_graph(checkpointer=cp)
+        graph = build_graph(checkpointer=cp, interrupt_before=interrupts)
         console.print(f"[bold green]Thread:[/] {tid}")
         console.print(f"[bold green]Query:[/]  {query}\n")
 
         for event in graph.stream(initial_state, config=config, stream_mode="updates"):
             for node_name, update in event.items():
                 _render_update(node_name, update)
+
+        if review:
+            paused = graph.get_state(config)
+            if paused.next and "synthesizer" in paused.next:
+                graded = paused.values.get("graded_documents") or []
+                relevant = [g for g in graded if g.relevance_score >= 0.6 and g.is_grounded]
+                console.rule("[bold yellow]Review pause[/]")
+                console.print(
+                    f"[bold]{len(graded)}[/] graded ({len(relevant)} relevant). "
+                    "Press Enter to continue to synthesis, Ctrl-C to abort."
+                )
+                try:
+                    typer.prompt("", default="", show_default=False)
+                except (KeyboardInterrupt, EOFError):
+                    console.print("[red]Aborted.[/]")
+                    return
+                # Resume by streaming with None.
+                for event in graph.stream(None, config=config, stream_mode="updates"):
+                    for node_name, update in event.items():
+                        _render_update(node_name, update)
 
         final = graph.get_state(config)
         report = final.values.get("final_report", "")
