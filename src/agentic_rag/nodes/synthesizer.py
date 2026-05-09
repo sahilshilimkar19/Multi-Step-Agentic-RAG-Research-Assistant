@@ -4,6 +4,7 @@ from __future__ import annotations
 import logging
 from typing import Any
 
+import structlog
 from langchain_core.messages import AIMessage, HumanMessage, SystemMessage
 
 from agentic_rag.config import get_settings
@@ -18,6 +19,12 @@ _MAX_CHARS_PER_DOC = 2000
 
 
 def synthesizer_node(state: ResearchState) -> dict[str, Any]:
+    iteration = state.get("iteration_count", 0)
+    with structlog.contextvars.bound_contextvars(node="synthesizer", iteration=iteration):
+        return _synthesizer_body(state)
+
+
+def _synthesizer_body(state: ResearchState) -> dict[str, Any]:
     settings = get_settings()
     llm = get_llm(settings.synthesizer_model, temperature=0.2)
 

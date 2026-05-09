@@ -5,6 +5,8 @@ import logging
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from typing import Any
 
+import structlog
+
 from agentic_rag.state import ResearchState
 from agentic_rag.tools.search import web_search
 
@@ -12,8 +14,13 @@ logger = logging.getLogger(__name__)
 
 
 def searcher_node(state: ResearchState) -> dict[str, Any]:
-    queries = state.get("search_queries") or []
     iteration = state.get("iteration_count", 0)
+    with structlog.contextvars.bound_contextvars(node="searcher", iteration=iteration):
+        return _searcher_body(state, iteration)
+
+
+def _searcher_body(state: ResearchState, iteration: int) -> dict[str, Any]:
+    queries = state.get("search_queries") or []
 
     if not queries:
         logger.warning("Searcher invoked with empty query list")

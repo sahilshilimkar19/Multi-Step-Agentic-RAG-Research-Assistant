@@ -25,6 +25,7 @@ class Settings(BaseSettings):
 
     checkpoint_db: str = Field(default="./checkpoints.sqlite", alias="CHECKPOINT_DB")
     log_level: str = Field(default="INFO", alias="LOG_LEVEL")
+    log_json: bool = Field(default=False, alias="LOG_JSON")
 
 
 @lru_cache

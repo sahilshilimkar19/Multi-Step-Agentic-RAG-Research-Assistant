@@ -1,11 +1,11 @@
 """Typer CLI: research / resume / list-runs."""
 from __future__ import annotations
 
-import logging
 import sqlite3
 import uuid
 from pathlib import Path
 
+import structlog
 import typer
 from langgraph.checkpoint.sqlite import SqliteSaver
 from rich.console import Console
@@ -13,17 +13,15 @@ from rich.markdown import Markdown
 
 from agentic_rag.config import get_settings
 from agentic_rag.graph import build_graph
+from agentic_rag.logging_config import configure_logging
 from agentic_rag.tools.pdf_loader import load_corpus
 
 app = typer.Typer(no_args_is_help=True, add_completion=False)
 console = Console()
 
 
-def _setup_logging(level: str) -> None:
-    logging.basicConfig(
-        level=level,
-        format="%(asctime)s [%(levelname)s] %(name)s: %(message)s",
-    )
+def _setup_logging(level: str, json_output: bool) -> None:
+    configure_logging(level=level, json_output=json_output)
 
 
 _RUNS_DIR = Path("runs")
@@ -70,7 +68,7 @@ def research(
 ) -> None:
     """Run a new research task."""
     settings = get_settings()
-    _setup_logging(settings.log_level)
+    _setup_logging(settings.log_level, settings.log_json)
 
     tid = thread_id or str(uuid.uuid4())
     config = {"configurable": {"thread_id": tid}}
@@ -95,7 +93,10 @@ def research(
         "messages": [],
     }
 
-    with SqliteSaver.from_conn_string(settings.checkpoint_db) as cp:
+    with (
+        SqliteSaver.from_conn_string(settings.checkpoint_db) as cp,
+        structlog.contextvars.bound_contextvars(thread_id=tid),
+    ):
         graph = build_graph(checkpointer=cp)
         console.print(f"[bold green]Thread:[/] {tid}")
         console.print(f"[bold green]Query:[/]  {query}\n")
@@ -120,10 +121,13 @@ def research(
 def resume(thread_id: str = typer.Argument(..., help="Thread ID from a prior run")) -> None:
     """Resume an interrupted research run."""
     settings = get_settings()
-    _setup_logging(settings.log_level)
+    _setup_logging(settings.log_level, settings.log_json)
 
     config = {"configurable": {"thread_id": thread_id}}
-    with SqliteSaver.from_conn_string(settings.checkpoint_db) as cp:
+    with (
+        SqliteSaver.from_conn_string(settings.checkpoint_db) as cp,
+        structlog.contextvars.bound_contextvars(thread_id=thread_id),
+    ):
         graph = build_graph(checkpointer=cp)
         for event in graph.stream(None, config=config, stream_mode="updates"):
             for node_name, update in event.items():

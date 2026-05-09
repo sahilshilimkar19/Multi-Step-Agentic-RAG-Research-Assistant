@@ -5,6 +5,7 @@ import logging
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from typing import Any
 
+import structlog
 from langchain_core.messages import HumanMessage, SystemMessage
 
 from agentic_rag.config import get_settings
@@ -74,6 +75,12 @@ def _grade_one(llm, doc: dict, original_query: str) -> GradedDocument | None:
 
 
 def grader_node(state: ResearchState) -> dict[str, Any]:
+    iteration = state.get("iteration_count", 0)
+    with structlog.contextvars.bound_contextvars(node="grader", iteration=iteration):
+        return _grader_body(state)
+
+
+def _grader_body(state: ResearchState) -> dict[str, Any]:
     settings = get_settings()
     llm = get_llm(settings.grader_model)
 

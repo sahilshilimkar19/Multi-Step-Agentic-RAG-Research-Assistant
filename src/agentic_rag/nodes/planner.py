@@ -5,6 +5,7 @@ import json
 import logging
 from typing import Any
 
+import structlog
 from langchain_core.messages import AIMessage, HumanMessage, SystemMessage
 
 from agentic_rag.config import get_settings
@@ -48,10 +49,15 @@ def _uncovered_plan_items(plan: list[str], relevant_docs: list[GradedDocument]) 
 
 
 def planner_node(state: ResearchState) -> dict[str, Any]:
+    iteration = state.get("iteration_count", 0)
+    with structlog.contextvars.bound_contextvars(node="planner", iteration=iteration):
+        return _planner_body(state, iteration)
+
+
+def _planner_body(state: ResearchState, iteration: int) -> dict[str, Any]:
     settings = get_settings()
     llm = get_llm(settings.planner_model)
 
-    iteration = state.get("iteration_count", 0)
     plan = state.get("research_plan") or []
 
     # First visit: build the plan and seed initial queries.
