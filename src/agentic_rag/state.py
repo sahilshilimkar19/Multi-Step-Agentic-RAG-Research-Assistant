@@ -57,6 +57,21 @@ class GraderOutput(BaseModel):
     rationale: str
 
 
+class GraderBatchItem(BaseModel):
+    """One verdict in a batched grader response."""
+
+    index: int
+    relevance_score: float
+    is_grounded: bool
+    rationale: str
+
+
+class GraderBatchOutput(BaseModel):
+    """Structured response from the batched grader LLM (multiple docs in one call)."""
+
+    grades: list[GraderBatchItem]
+
+
 class ResearchState(TypedDict):
     # Inputs (set once)
     original_query: str

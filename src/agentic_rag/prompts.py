@@ -72,6 +72,38 @@ Document content (truncated):
 \"\"\"
 """
 
+GRADER_BATCH_SYSTEM = """You are a strict relevance and groundedness judge.
+
+You will be given N numbered documents and one user query. For EACH \
+document, evaluate it against the query and the document's specific \
+sub-question (provided per doc). Return STRICT JSON with this shape:
+
+{
+  "grades": [
+    {"index": 0, "relevance_score": 0.0, "is_grounded": true, "rationale": "..."},
+    {"index": 1, "relevance_score": 0.0, "is_grounded": true, "rationale": "..."},
+    ...
+  ]
+}
+
+Definitions:
+- relevance_score (0.0 to 1.0): how directly the document answers its \
+sub-question. 0 = unrelated, 1 = directly answers it.
+- is_grounded (boolean): whether the document's claims appear factual and \
+verifiable. Set false if the content contradicts itself, makes implausible \
+claims, or reads as fabricated.
+
+Be conservative -- irrelevant noise pollutes synthesis. You MUST emit one \
+verdict per input document, in the same numbered order.
+"""
+
+GRADER_BATCH_USER = """Original query: {query}
+
+Documents to grade:
+{documents}
+"""
+
+
 SYNTHESIZER_SYSTEM = """You are writing a research report.
 
 Use ONLY the provided graded documents as evidence. Cite each factual claim \

@@ -25,8 +25,12 @@ def test_review_pauses_before_synthesizer(patch_get_llm, patch_web_search, mem_s
     # Sequence: planner first-visit -> grade x2 -> router synthesize -> (PAUSE) -> synth.
     patch_get_llm.queue(
         {"plan": ["Sub-Q 1"], "initial_queries": ["q1"]},
-        {"relevance_score": 0.9, "is_grounded": True, "rationale": "r"},
-        {"relevance_score": 0.9, "is_grounded": True, "rationale": "r"},
+        {
+            "grades": [
+                {"index": 0, "relevance_score": 0.9, "is_grounded": True, "rationale": "r"},
+                {"index": 1, "relevance_score": 0.9, "is_grounded": True, "rationale": "r"},
+            ]
+        },
         {"next_action": "synthesize", "rationale": "enough", "queries": []},
         "# Report\n\nDone.",
     )
@@ -52,8 +56,12 @@ def test_no_review_runs_to_completion(patch_get_llm, patch_web_search, mem_saver
     """interrupt_before defaults to None -> no pause."""
     patch_get_llm.queue(
         {"plan": ["S"], "initial_queries": ["q"]},
-        {"relevance_score": 0.9, "is_grounded": True, "rationale": "r"},
-        {"relevance_score": 0.9, "is_grounded": True, "rationale": "r"},
+        {
+            "grades": [
+                {"index": 0, "relevance_score": 0.9, "is_grounded": True, "rationale": "r"},
+                {"index": 1, "relevance_score": 0.9, "is_grounded": True, "rationale": "r"},
+            ]
+        },
         {"next_action": "synthesize", "rationale": "ok", "queries": []},
         "# Report\n\nFinished.",
     )

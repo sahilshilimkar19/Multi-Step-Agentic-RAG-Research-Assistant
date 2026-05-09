@@ -12,12 +12,23 @@ from agentic_rag.cache import ThreadCache, cache_dir
 from agentic_rag.config import get_settings
 from agentic_rag.llm import UsageCollector, get_llm
 from agentic_rag.nodes.planner import _safe_json
-from agentic_rag.prompts import GRADER_SYSTEM, GRADER_USER
-from agentic_rag.state import GradedDocument, GraderOutput, ResearchState
+from agentic_rag.prompts import (
+    GRADER_BATCH_SYSTEM,
+    GRADER_BATCH_USER,
+    GRADER_SYSTEM,
+    GRADER_USER,
+)
+from agentic_rag.state import (
+    GradedDocument,
+    GraderBatchOutput,
+    GraderOutput,
+    ResearchState,
+)
 
 logger = logging.getLogger(__name__)
 
 _MAX_GRADER_DOC_CHARS = 4000
+_BATCH_SIZE = 5
 
 
 def _grade_one(
@@ -78,6 +89,60 @@ def _grade_one(
         return None
 
 
+def _grade_batch(
+    llm, docs: list[dict], original_query: str, usage: UsageCollector | None = None
+) -> list[GradedDocument] | None:
+    """Grade up to _BATCH_SIZE docs in one LLM call. Returns None on failure (caller falls back)."""
+    if not docs:
+        return []
+    numbered = "\n\n".join(
+        f"--- Document {i} ---\n"
+        f"Sub-question: {d.get('sub_question', original_query)}\n"
+        f"URL: {d.get('url', '')}\n"
+        f"Content: {(d.get('content', '') or '')[:_MAX_GRADER_DOC_CHARS]}"
+        for i, d in enumerate(docs)
+    )
+    messages = [
+        SystemMessage(content=GRADER_BATCH_SYSTEM),
+        HumanMessage(content=GRADER_BATCH_USER.format(query=original_query, documents=numbered)),
+    ]
+    cb_config = {"callbacks": [usage]} if usage is not None else {}
+    try:
+        structured_llm = llm.with_structured_output(GraderBatchOutput)
+        output: GraderBatchOutput = structured_llm.invoke(messages, config=cb_config)
+    except Exception as e:
+        logger.warning("Batched grader failed (%s); falling back to per-doc", e)
+        return None
+
+    by_index = {item.index: item for item in output.grades}
+    if len(by_index) != len(docs):
+        logger.warning(
+            "Batched grader returned %d items for %d docs; falling back",
+            len(by_index),
+            len(docs),
+        )
+        return None
+
+    out: list[GradedDocument] = []
+    for i, d in enumerate(docs):
+        item = by_index.get(i)
+        if item is None:
+            return None
+        score = max(0.0, min(1.0, float(item.relevance_score)))
+        out.append(
+            GradedDocument(
+                content=d.get("content", "") or "",
+                url=d.get("url", "") or "",
+                source=d.get("source", "unknown"),
+                sub_question=d.get("sub_question", original_query),
+                relevance_score=score,
+                is_grounded=bool(item.is_grounded),
+                rationale=item.rationale,
+            )
+        )
+    return out
+
+
 def grader_node(
     state: ResearchState, config: RunnableConfig | None = None
 ) -> dict[str, Any]:
@@ -109,17 +174,29 @@ def _grader_body(state: ResearchState, thread_id: str | None) -> dict[str, Any]:
         logger.info("Grader: nothing new to grade")
         return {}
 
-    logger.info("Grader: grading %d new docs", len(to_grade))
+    logger.info("Grader: grading %d new docs (batches of %d)", len(to_grade), _BATCH_SIZE)
 
     new_grades: list[GradedDocument] = []
-    with ThreadPoolExecutor(max_workers=8) as ex:
-        futures = [
-            ex.submit(_grade_one, llm, d, state["original_query"], usage) for d in to_grade
-        ]
-        for fut in as_completed(futures):
-            res = fut.result()
-            if res is not None:
-                new_grades.append(res)
+    # Try batched path first; fall back to per-doc parallel for any batch that fails.
+    fallback: list[dict] = []
+    for i in range(0, len(to_grade), _BATCH_SIZE):
+        chunk = to_grade[i : i + _BATCH_SIZE]
+        batch_grades = _grade_batch(llm, chunk, state["original_query"], usage)
+        if batch_grades is None:
+            fallback.extend(chunk)
+        else:
+            new_grades.extend(batch_grades)
+
+    if fallback:
+        logger.info("Grader: %d docs in per-doc fallback", len(fallback))
+        with ThreadPoolExecutor(max_workers=8) as ex:
+            futures = [
+                ex.submit(_grade_one, llm, d, state["original_query"], usage) for d in fallback
+            ]
+            for fut in as_completed(futures):
+                res = fut.result()
+                if res is not None:
+                    new_grades.append(res)
 
     relevant = [
         g

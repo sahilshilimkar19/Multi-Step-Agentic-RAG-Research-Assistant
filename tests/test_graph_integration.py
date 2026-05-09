@@ -23,13 +23,17 @@ def _initial_state(query: str = "test query", max_iterations: int = 2) -> dict:
 def test_full_loop_terminates_within_cap(patch_get_llm, patch_web_search, mem_saver):
     # Sequence of LLM responses for the run:
     #   1) planner first-visit  -> plan + initial_queries
-    #   2) two grader calls (one per fake doc, fan-out)
+    #   2) batched grader covering both fake docs in one call
     #   3) planner router -> synthesize (we want to terminate after one loop)
     #   4) synthesizer -> markdown report
     patch_get_llm.queue(
         {"plan": ["Sub-Q 1"], "initial_queries": ["q1"]},
-        {"relevance_score": 0.9, "is_grounded": True, "rationale": "r"},
-        {"relevance_score": 0.9, "is_grounded": True, "rationale": "r"},
+        {
+            "grades": [
+                {"index": 0, "relevance_score": 0.9, "is_grounded": True, "rationale": "r"},
+                {"index": 1, "relevance_score": 0.9, "is_grounded": True, "rationale": "r"},
+            ]
+        },
         {"next_action": "synthesize", "rationale": "enough", "queries": []},
         "# Report\n\n## Executive Summary\nDone.",
     )
@@ -50,9 +54,13 @@ def test_loop_respects_hard_cap_when_router_keeps_searching(
     # max_iterations=2 -> two search rounds, then forced synthesize.
     queue = [
         {"plan": ["Sub-Q 1"], "initial_queries": ["q1"]},  # planner first visit
-        # iter 1 grading (2 fake docs)
-        {"relevance_score": 0.5, "is_grounded": True, "rationale": "r"},
-        {"relevance_score": 0.5, "is_grounded": True, "rationale": "r"},
+        # iter 1 batched grader (2 fake docs in one call)
+        {
+            "grades": [
+                {"index": 0, "relevance_score": 0.5, "is_grounded": True, "rationale": "r"},
+                {"index": 1, "relevance_score": 0.5, "is_grounded": True, "rationale": "r"},
+            ]
+        },
         # router round 1 -> search again
         {"next_action": "search", "rationale": "more", "queries": ["q2"]},
         # iter 2 grading: only NEW docs would be graded, but our fake search returns same URLs
