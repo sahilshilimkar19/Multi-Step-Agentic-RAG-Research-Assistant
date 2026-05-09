@@ -2,7 +2,6 @@
 from __future__ import annotations
 
 import logging
-from typing import List
 
 from langchain_community.tools.tavily_search import TavilySearchResults
 from langchain_core.tools import tool
@@ -20,12 +19,12 @@ class SearchResult(BaseModel):
 
 
 @retry(stop=stop_after_attempt(2), wait=wait_exponential(multiplier=1, min=1, max=4))
-def _tavily_search(query: str, max_results: int) -> List[dict]:
+def _tavily_search(query: str, max_results: int) -> list[dict]:
     tavily = TavilySearchResults(max_results=max_results)
     return tavily.invoke(query)
 
 
-def _ddg_search(query: str, max_results: int) -> List[dict]:
+def _ddg_search(query: str, max_results: int) -> list[dict]:
     from duckduckgo_search import DDGS
 
     with DDGS() as ddgs:
@@ -33,7 +32,7 @@ def _ddg_search(query: str, max_results: int) -> List[dict]:
 
 
 @tool
-def web_search(query: str, max_results: int = 5) -> List[dict]:
+def web_search(query: str, max_results: int = 5) -> list[dict]:
     """Search the web. Tries Tavily first; falls back to DuckDuckGo on failure."""
     try:
         results = _tavily_search(query, max_results)

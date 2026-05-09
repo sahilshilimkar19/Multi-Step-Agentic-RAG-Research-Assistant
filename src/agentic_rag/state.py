@@ -1,7 +1,7 @@
 """Graph state schema + Pydantic models for structured per-doc data."""
 from __future__ import annotations
 
-from typing import Annotated, List, Literal, TypedDict
+from typing import Annotated, Literal, TypedDict
 
 from langchain_core.messages import BaseMessage
 from langgraph.graph.message import add_messages
@@ -26,12 +26,12 @@ class ResearchState(TypedDict):
     max_iterations: int
 
     # Plan (set by planner on first visit)
-    research_plan: List[str]
+    research_plan: list[str]
 
     # Working memory (mutated each iteration)
-    search_queries: List[str]
-    raw_documents: List[dict]
-    graded_documents: List[GradedDocument]
+    search_queries: list[str]
+    raw_documents: list[dict]
+    graded_documents: list[GradedDocument]
     iteration_count: int
 
     # Routing

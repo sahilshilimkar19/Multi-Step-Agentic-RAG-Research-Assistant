@@ -21,7 +21,7 @@ class FakeLLM:
         self._queue: deque = deque(responses or [])
         self.calls: list[list] = []  # records the messages each invoke received
 
-    def queue(self, *responses: Any) -> "FakeLLM":
+    def queue(self, *responses: Any) -> FakeLLM:
         for r in responses:
             self._queue.append(r)
         return self

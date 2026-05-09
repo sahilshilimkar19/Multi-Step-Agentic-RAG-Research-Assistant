@@ -5,7 +5,6 @@ import logging
 import sqlite3
 import uuid
 from pathlib import Path
-from typing import Optional
 
 import typer
 from langgraph.checkpoint.sqlite import SqliteSaver
@@ -50,11 +49,11 @@ def _render_update(node_name: str, update: dict) -> None:
 @app.command()
 def research(
     query: str = typer.Argument(..., help="Research question"),
-    thread_id: Optional[str] = typer.Option(None, "--thread-id", help="Reuse an existing thread"),
-    max_iterations: Optional[int] = typer.Option(
+    thread_id: str | None = typer.Option(None, "--thread-id", help="Reuse an existing thread"),
+    max_iterations: int | None = typer.Option(
         None, "--max-iterations", help="Override MAX_ITERATIONS"
     ),
-    pdf: Optional[list[Path]] = typer.Option(
+    pdf: list[Path] | None = typer.Option(
         None, "--pdf", help="Pre-load PDF(s) into the corpus before planning"
     ),
 ) -> None:
