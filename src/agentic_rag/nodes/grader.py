@@ -1,7 +1,7 @@
 """Grader node: LLM-as-judge over raw_documents, producing GradedDocument entries."""
 
+import asyncio
 import logging
-from concurrent.futures import ThreadPoolExecutor, as_completed
 from typing import Any
 
 import structlog
@@ -29,6 +29,7 @@ logger = logging.getLogger(__name__)
 
 _MAX_GRADER_DOC_CHARS = 4000
 _BATCH_SIZE = 5
+_GRADER_CONCURRENCY = 8
 
 
 def _grade_one(
@@ -143,6 +144,43 @@ def _grade_batch(
     return out
 
 
+async def _gather_batches(
+    llm, docs: list[dict], original_query: str, usage: UsageCollector
+) -> tuple[list[GradedDocument], list[dict]]:
+    """Run all batched grader calls concurrently. Returns (graded, fallback_chunks)."""
+    sem = asyncio.Semaphore(_GRADER_CONCURRENCY)
+    chunks = [docs[i : i + _BATCH_SIZE] for i in range(0, len(docs), _BATCH_SIZE)]
+
+    async def _one(chunk: list[dict]) -> tuple[list[GradedDocument] | None, list[dict]]:
+        async with sem:
+            result = await asyncio.to_thread(_grade_batch, llm, chunk, original_query, usage)
+        return result, chunk
+
+    results = await asyncio.gather(*(_one(c) for c in chunks))
+    graded: list[GradedDocument] = []
+    fallback: list[dict] = []
+    for batch_result, chunk in results:
+        if batch_result is None:
+            fallback.extend(chunk)
+        else:
+            graded.extend(batch_result)
+    return graded, fallback
+
+
+async def _gather_per_doc(
+    llm, docs: list[dict], original_query: str, usage: UsageCollector
+) -> list[GradedDocument]:
+    """Run per-doc grading concurrently for any docs that fell out of the batched path."""
+    sem = asyncio.Semaphore(_GRADER_CONCURRENCY)
+
+    async def _one(d: dict) -> GradedDocument | None:
+        async with sem:
+            return await asyncio.to_thread(_grade_one, llm, d, original_query, usage)
+
+    results = await asyncio.gather(*(_one(d) for d in docs))
+    return [r for r in results if r is not None]
+
+
 def grader_node(
     state: ResearchState, config: RunnableConfig | None = None
 ) -> dict[str, Any]:
@@ -176,27 +214,14 @@ def _grader_body(state: ResearchState, thread_id: str | None) -> dict[str, Any]:
 
     logger.info("Grader: grading %d new docs (batches of %d)", len(to_grade), _BATCH_SIZE)
 
-    new_grades: list[GradedDocument] = []
-    # Try batched path first; fall back to per-doc parallel for any batch that fails.
-    fallback: list[dict] = []
-    for i in range(0, len(to_grade), _BATCH_SIZE):
-        chunk = to_grade[i : i + _BATCH_SIZE]
-        batch_grades = _grade_batch(llm, chunk, state["original_query"], usage)
-        if batch_grades is None:
-            fallback.extend(chunk)
-        else:
-            new_grades.extend(batch_grades)
+    new_grades, fallback = asyncio.run(
+        _gather_batches(llm, to_grade, state["original_query"], usage)
+    )
 
     if fallback:
         logger.info("Grader: %d docs in per-doc fallback", len(fallback))
-        with ThreadPoolExecutor(max_workers=8) as ex:
-            futures = [
-                ex.submit(_grade_one, llm, d, state["original_query"], usage) for d in fallback
-            ]
-            for fut in as_completed(futures):
-                res = fut.result()
-                if res is not None:
-                    new_grades.append(res)
+        per_doc = asyncio.run(_gather_per_doc(llm, fallback, state["original_query"], usage))
+        new_grades.extend(per_doc)
 
     relevant = [
         g
