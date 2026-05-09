@@ -1,5 +1,4 @@
 """Grader node: LLM-as-judge over raw_documents, producing GradedDocument entries."""
-from __future__ import annotations
 
 import logging
 from concurrent.futures import ThreadPoolExecutor, as_completed
@@ -7,7 +6,9 @@ from typing import Any
 
 import structlog
 from langchain_core.messages import HumanMessage, SystemMessage
+from langchain_core.runnables import RunnableConfig
 
+from agentic_rag.cache import ThreadCache, cache_dir
 from agentic_rag.config import get_settings
 from agentic_rag.llm import UsageCollector, get_llm
 from agentic_rag.nodes.planner import _safe_json
@@ -77,20 +78,25 @@ def _grade_one(
         return None
 
 
-def grader_node(state: ResearchState) -> dict[str, Any]:
+def grader_node(
+    state: ResearchState, config: RunnableConfig | None = None
+) -> dict[str, Any]:
     """Score each NEW raw document for relevance + groundedness.
 
     Skips docs that are already in `graded_documents` (URL match), so resumes
     after a partial run do not re-grade. Grades up to 8 docs in parallel via
     ThreadPoolExecutor; per-doc failures return None and are dropped.
     Returns the appended graded_documents list and accumulated token usage.
+    Writes graded docs through to the per-thread Chroma cache when the
+    LangGraph config carries a `thread_id`.
     """
     iteration = state.get("iteration_count", 0)
+    thread_id = ((config or {}).get("configurable") or {}).get("thread_id")
     with structlog.contextvars.bound_contextvars(node="grader", iteration=iteration):
-        return _grader_body(state)
+        return _grader_body(state, thread_id)
 
 
-def _grader_body(state: ResearchState) -> dict[str, Any]:
+def _grader_body(state: ResearchState, thread_id: str | None) -> dict[str, Any]:
     settings = get_settings()
     llm = get_llm(settings.grader_model)
     usage = UsageCollector()  # accumulated across all per-doc calls
@@ -121,6 +127,10 @@ def _grader_body(state: ResearchState) -> dict[str, Any]:
         if g.relevance_score >= settings.relevance_threshold and g.is_grounded
     ]
     logger.info("Grader: %d/%d passed threshold", len(relevant), len(new_grades))
+
+    if thread_id and new_grades:
+        cache = ThreadCache(thread_id, cache_dir(settings.checkpoint_db))
+        cache.add(new_grades)
 
     return {
         "graded_documents": graded + new_grades,

@@ -1,12 +1,13 @@
 """Synthesizer node: produces the final markdown report from graded evidence."""
-from __future__ import annotations
 
 import logging
 from typing import Any
 
 import structlog
 from langchain_core.messages import AIMessage, HumanMessage, SystemMessage
+from langchain_core.runnables import RunnableConfig
 
+from agentic_rag.cache import ThreadCache, cache_dir
 from agentic_rag.config import get_settings
 from agentic_rag.llm import UsageCollector, get_llm
 from agentic_rag.prompts import SYNTHESIZER_SYSTEM, SYNTHESIZER_USER
@@ -18,30 +19,47 @@ _MAX_DOCS_IN_CONTEXT = 30
 _MAX_CHARS_PER_DOC = 2000
 
 
-def synthesizer_node(state: ResearchState) -> dict[str, Any]:
+def synthesizer_node(
+    state: ResearchState, config: RunnableConfig | None = None
+) -> dict[str, Any]:
     """Render the final markdown report from graded evidence.
 
     Filters `graded_documents` by relevance threshold and `is_grounded`,
     sorts by score, caps to the top 30 docs (2k chars per doc), and asks
     the synthesizer LLM to produce a structured markdown report with
-    [n] citations. Sets `next_action="end"` and the run terminates.
+    [n] citations. When a thread_id is in the LangGraph config, prefers
+    the Chroma cache's similarity-ranked top-k for evidence selection;
+    falls back to the in-state list if the cache is empty/unavailable.
     """
     iteration = state.get("iteration_count", 0)
+    thread_id = ((config or {}).get("configurable") or {}).get("thread_id")
     with structlog.contextvars.bound_contextvars(node="synthesizer", iteration=iteration):
-        return _synthesizer_body(state)
+        return _synthesizer_body(state, thread_id)
 
 
-def _synthesizer_body(state: ResearchState) -> dict[str, Any]:
+def _synthesizer_body(state: ResearchState, thread_id: str | None) -> dict[str, Any]:
     settings = get_settings()
     llm = get_llm(settings.synthesizer_model, temperature=0.2)
     usage = UsageCollector()
 
-    relevant = [
-        d
-        for d in (state.get("graded_documents") or [])
-        if d.relevance_score >= settings.relevance_threshold and d.is_grounded
-    ]
-    relevant.sort(key=lambda d: d.relevance_score, reverse=True)
+    cache_hits: list = []
+    if thread_id:
+        cache = ThreadCache(thread_id, cache_dir(settings.checkpoint_db))
+        cache_hits = cache.search(state["original_query"], k=_MAX_DOCS_IN_CONTEXT)
+
+    if cache_hits:
+        relevant = [
+            d for d in cache_hits
+            if d.relevance_score >= settings.relevance_threshold and d.is_grounded
+        ]
+        logger.info("Synthesizer: using %d docs from Chroma cache", len(relevant))
+    else:
+        relevant = [
+            d
+            for d in (state.get("graded_documents") or [])
+            if d.relevance_score >= settings.relevance_threshold and d.is_grounded
+        ]
+        relevant.sort(key=lambda d: d.relevance_score, reverse=True)
     relevant = relevant[:_MAX_DOCS_IN_CONTEXT]
 
     docs_text = "\n\n".join(
