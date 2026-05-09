@@ -21,7 +21,7 @@ env/
 # Runtime artifacts
 checkpoints.sqlite
 checkpoints.sqlite-journal
-runs/
+/runs/
 *.log
 
 # User PDFs (keep the directory itself)
@@ -33,3 +33,14 @@ data/pdfs/*
 Thumbs.db
 .idea/
 .vscode/
+
+# Next.js
+web/node_modules/
+web/.next/
+web/.turbo/
+web/next-env.d.ts.bak
+web/tsconfig.tsbuildinfo
+
+# Uploaded PDFs (keep the directory itself)
+data/uploads/*
+!data/uploads/.gitkeep

@@ -228,6 +228,45 @@ the rest of the code is unchanged.
 
 ---
 
+## Web UI (preview)
+
+A minimal Next.js 14 + FastAPI front end ships under `web/` and
+`src/agentic_rag/server.py`. The CLI keeps working unchanged; the web UI is
+purely additive and currently localhost-only. PR-1 is the thin slice:
+`POST /api/runs` + an SSE stream — start a run, watch streamed
+planner/searcher/grader updates, see the final markdown report. List-runs,
+resume, chat, HITL `--review`, and PDF upload land in subsequent PRs.
+
+### Run it (two terminals)
+
+```bash
+# Terminal A: FastAPI (Python core)
+uvicorn agentic_rag.server:app --reload --port 8000
+
+# Terminal B: Next.js dev server
+cd web && npm install        # first time only
+npm run dev                  # starts on :3000
+```
+
+Open <http://localhost:3000>, type a query, click Start. The browser
+navigates to `/runs/<thread-id>` and streams node-by-node updates.
+
+### SSE fallback
+
+Next.js dev rewrites occasionally buffer Server-Sent Events. If you only see
+the final report and never the intermediate panels, set:
+
+```bash
+# in web/.env.local (or your shell)
+NEXT_PUBLIC_API_BASE=http://localhost:8000
+```
+
+Restart `npm run dev` and start the FastAPI server with
+`AGENTIC_RAG_DEV=1` so it serves CORS for `http://localhost:3000`. The
+browser will then connect to FastAPI directly, bypassing Next's proxy.
+
+---
+
 ## Risks and mitigations
 
 | Risk                              | Mitigation                                                    |
