@@ -1,0 +1,35 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.eggs/
+build/
+dist/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+
+# Virtual envs
+.venv/
+venv/
+env/
+
+# Secrets
+.env
+.env.local
+
+# Runtime artifacts
+checkpoints.sqlite
+checkpoints.sqlite-journal
+runs/
+*.log
+
+# User PDFs (keep the directory itself)
+data/pdfs/*
+!data/pdfs/.gitkeep
+
+# OS / editor
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/
