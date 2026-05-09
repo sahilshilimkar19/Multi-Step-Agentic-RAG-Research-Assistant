@@ -11,7 +11,7 @@ from agentic_rag.config import get_settings
 from agentic_rag.llm import get_llm
 from agentic_rag.nodes.planner import _safe_json
 from agentic_rag.prompts import GRADER_SYSTEM, GRADER_USER
-from agentic_rag.state import GradedDocument, ResearchState
+from agentic_rag.state import GradedDocument, GraderOutput, ResearchState
 
 logger = logging.getLogger(__name__)
 
@@ -19,39 +19,54 @@ _MAX_GRADER_DOC_CHARS = 4000
 
 
 def _grade_one(llm, doc: dict, original_query: str) -> GradedDocument | None:
+    messages = [
+        SystemMessage(content=GRADER_SYSTEM),
+        HumanMessage(
+            content=GRADER_USER.format(
+                query=original_query,
+                sub_question=doc.get("sub_question", original_query),
+                url=doc.get("url", ""),
+                content=(doc.get("content", "") or "")[:_MAX_GRADER_DOC_CHARS],
+            )
+        ),
+    ]
+    score: float
+    is_grounded: bool
+    rationale: str
     try:
-        resp = llm.invoke(
-            [
-                SystemMessage(content=GRADER_SYSTEM),
-                HumanMessage(
-                    content=GRADER_USER.format(
-                        query=original_query,
-                        sub_question=doc.get("sub_question", original_query),
-                        url=doc.get("url", ""),
-                        content=(doc.get("content", "") or "")[:_MAX_GRADER_DOC_CHARS],
-                    )
-                ),
-            ]
-        )
-        text = resp.content if isinstance(resp.content, str) else str(resp.content)
-        data = _safe_json(
-            text,
-            default={
-                "relevance_score": 0.0,
-                "is_grounded": False,
-                "rationale": "grader parse failed",
-            },
-        )
-        score = float(data.get("relevance_score", 0.0))
-        score = max(0.0, min(1.0, score))
+        try:
+            structured_llm = llm.with_structured_output(GraderOutput)
+            output: GraderOutput = structured_llm.invoke(messages)
+            score = max(0.0, min(1.0, float(output.relevance_score)))
+            is_grounded = bool(output.is_grounded)
+            rationale = output.rationale
+        except Exception as struct_err:
+            logger.warning(
+                "Grader structured output failed for %s (%s); falling back to JSON",
+                doc.get("url"),
+                struct_err,
+            )
+            resp = llm.invoke(messages)
+            text = resp.content if isinstance(resp.content, str) else str(resp.content)
+            data = _safe_json(
+                text,
+                default={
+                    "relevance_score": 0.0,
+                    "is_grounded": False,
+                    "rationale": "grader parse failed",
+                },
+            )
+            score = max(0.0, min(1.0, float(data.get("relevance_score", 0.0))))
+            is_grounded = bool(data.get("is_grounded", False))
+            rationale = data.get("rationale", "")
         return GradedDocument(
             content=doc.get("content", "") or "",
             url=doc.get("url", "") or "",
             source=doc.get("source", "unknown"),
             sub_question=doc.get("sub_question", original_query),
             relevance_score=score,
-            is_grounded=bool(data.get("is_grounded", False)),
-            rationale=data.get("rationale", ""),
+            is_grounded=is_grounded,
+            rationale=rationale,
         )
     except Exception as e:
         logger.error("Grading failed for %s: %s", doc.get("url"), e)

@@ -73,3 +73,25 @@ def test_clamps_relevance_score(patch_get_llm):
     patch_get_llm.queue({"relevance_score": 99.0, "is_grounded": True, "rationale": "r"})
     out = grader_node(_state(raw_documents=raw))
     assert out["graded_documents"][0].relevance_score == 1.0
+
+
+def test_grader_structured_output_path(patch_get_llm):
+    """Happy path: grader consumes one structured response per doc, no fallback."""
+    raw = [{"url": "https://a", "content": "x", "source": "tavily", "sub_question": "q"}]
+    patch_get_llm.queue({"relevance_score": 0.85, "is_grounded": True, "rationale": "r"})
+    out = grader_node(_state(raw_documents=raw))
+    assert out["graded_documents"][0].relevance_score == 0.85
+    assert len(patch_get_llm.calls) == 1
+
+
+def test_grader_falls_back_when_structured_raises(patch_get_llm):
+    """Queue an exception for structured invoke, then a dict for unstructured fallback."""
+    raw = [{"url": "https://a", "content": "x", "source": "tavily", "sub_question": "q"}]
+    patch_get_llm.queue(
+        ValueError("schema mismatch"),
+        {"relevance_score": 0.7, "is_grounded": True, "rationale": "fb"},
+    )
+    out = grader_node(_state(raw_documents=raw))
+    assert out["graded_documents"][0].relevance_score == 0.7
+    assert out["graded_documents"][0].rationale == "fb"
+    assert len(patch_get_llm.calls) == 2

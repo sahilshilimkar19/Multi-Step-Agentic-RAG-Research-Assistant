@@ -151,3 +151,30 @@ def test_router_falls_back_on_bad_json(patch_get_llm):
     assert out["next_action"] == "search"
     # Falls back to uncovered plan items, capped at 3.
     assert "cosmic" in " ".join(out["search_queries"]).lower()
+
+
+# ---- A2: structured output ---------------------------------------------
+
+def test_planner_structured_output_path(patch_get_llm):
+    """Happy path: planner consumes a single structured response, no fallback."""
+    patch_get_llm.queue(
+        {"plan": ["Sub-Q 1", "Sub-Q 2"], "initial_queries": ["q1", "q2"]}
+    )
+    out = planner_node(_base_state())
+    assert out["research_plan"] == ["Sub-Q 1", "Sub-Q 2"]
+    assert out["search_queries"] == ["q1", "q2"]
+    # Exactly one call -- the structured path -- no fallback to unstructured.
+    assert len(patch_get_llm.calls) == 1
+
+
+def test_planner_falls_back_when_structured_raises(patch_get_llm):
+    """Queue an exception for structured invoke, then a dict for unstructured."""
+    patch_get_llm.queue(
+        ValueError("simulated provider validation failure"),
+        {"plan": ["Fallback plan"], "initial_queries": ["fb-q"]},
+    )
+    out = planner_node(_base_state())
+    assert out["research_plan"] == ["Fallback plan"]
+    assert out["search_queries"] == ["fb-q"]
+    # Two calls: structured (raised) + unstructured fallback.
+    assert len(patch_get_llm.calls) == 2

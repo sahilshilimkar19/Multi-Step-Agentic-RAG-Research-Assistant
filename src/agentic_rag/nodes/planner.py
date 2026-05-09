@@ -15,7 +15,7 @@ from agentic_rag.prompts import (
     ROUTER_SYSTEM,
     ROUTER_USER,
 )
-from agentic_rag.state import GradedDocument, ResearchState
+from agentic_rag.state import GradedDocument, PlannerOutput, ResearchState, RouterOutput
 
 logger = logging.getLogger(__name__)
 
@@ -57,24 +57,32 @@ def planner_node(state: ResearchState) -> dict[str, Any]:
     # First visit: build the plan and seed initial queries.
     if iteration == 0 and not plan:
         logger.info("Planner: initial planning for query=%r", state["original_query"])
-        resp = llm.invoke(
-            [
-                SystemMessage(content=PLANNER_SYSTEM),
-                HumanMessage(content=PLANNER_USER.format(query=state["original_query"])),
-            ]
-        )
-        data = _safe_json(
-            resp.content if isinstance(resp.content, str) else str(resp.content),
-            default={
-                "plan": [state["original_query"]],
-                "initial_queries": [state["original_query"]],
-            },
-        )
+        messages = [
+            SystemMessage(content=PLANNER_SYSTEM),
+            HumanMessage(content=PLANNER_USER.format(query=state["original_query"])),
+        ]
+        try:
+            structured_llm = llm.with_structured_output(PlannerOutput)
+            output: PlannerOutput = structured_llm.invoke(messages)
+            new_plan = output.plan or [state["original_query"]]
+            new_queries = output.initial_queries or [state["original_query"]]
+        except Exception as e:
+            logger.warning("Planner structured output failed (%s); falling back to JSON", e)
+            resp = llm.invoke(messages)
+            data = _safe_json(
+                resp.content if isinstance(resp.content, str) else str(resp.content),
+                default={
+                    "plan": [state["original_query"]],
+                    "initial_queries": [state["original_query"]],
+                },
+            )
+            new_plan = data.get("plan") or [state["original_query"]]
+            new_queries = data.get("initial_queries") or [state["original_query"]]
         return {
-            "research_plan": data.get("plan") or [state["original_query"]],
-            "search_queries": data.get("initial_queries") or [state["original_query"]],
+            "research_plan": new_plan,
+            "search_queries": new_queries,
             "next_action": "search",
-            "messages": [AIMessage(content=f"Plan: {data.get('plan', [])}")],
+            "messages": [AIMessage(content=f"Plan: {new_plan}")],
         }
 
     # Subsequent visits: route.
@@ -98,35 +106,43 @@ def planner_node(state: ResearchState) -> dict[str, Any]:
         return {"next_action": "synthesize"}
 
     # Otherwise ask the router LLM.
-    resp = llm.invoke(
-        [
-            SystemMessage(
-                content=ROUTER_SYSTEM.format(
-                    plan=plan,
-                    iteration=iteration,
-                    max_iterations=state["max_iterations"],
-                    relevant_count=len(relevant),
-                    uncovered=uncovered,
-                )
-            ),
-            HumanMessage(content=ROUTER_USER),
-        ]
-    )
+    router_messages = [
+        SystemMessage(
+            content=ROUTER_SYSTEM.format(
+                plan=plan,
+                iteration=iteration,
+                max_iterations=state["max_iterations"],
+                relevant_count=len(relevant),
+                uncovered=uncovered,
+            )
+        ),
+        HumanMessage(content=ROUTER_USER),
+    ]
     fallback_queries = uncovered[:3] or [state["original_query"]]
-    data = _safe_json(
-        resp.content if isinstance(resp.content, str) else str(resp.content),
-        default={
-            "next_action": "search",
-            "rationale": "fallback: continue searching",
-            "queries": fallback_queries,
-        },
-    )
-    next_action = data.get("next_action", "search")
-    if next_action not in ("search", "synthesize"):
-        next_action = "search"
-    queries = data.get("queries") or fallback_queries
+    try:
+        structured_llm = llm.with_structured_output(RouterOutput)
+        router_output: RouterOutput = structured_llm.invoke(router_messages)
+        next_action = router_output.next_action
+        queries = router_output.queries or fallback_queries
+        rationale = router_output.rationale
+    except Exception as e:
+        logger.warning("Router structured output failed (%s); falling back to JSON", e)
+        resp = llm.invoke(router_messages)
+        data = _safe_json(
+            resp.content if isinstance(resp.content, str) else str(resp.content),
+            default={
+                "next_action": "search",
+                "rationale": "fallback: continue searching",
+                "queries": fallback_queries,
+            },
+        )
+        next_action = data.get("next_action", "search")
+        if next_action not in ("search", "synthesize"):
+            next_action = "search"
+        queries = data.get("queries") or fallback_queries
+        rationale = data.get("rationale", "")
     return {
         "next_action": next_action,
         "search_queries": queries,
-        "messages": [AIMessage(content=f"Router: {data.get('rationale', '')}")],
+        "messages": [AIMessage(content=f"Router: {rationale}")],
     }

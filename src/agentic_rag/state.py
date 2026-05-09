@@ -20,6 +20,33 @@ class GradedDocument(BaseModel):
     rationale: str
 
 
+class PlannerOutput(BaseModel):
+    """Structured response from the planner LLM (first-visit decomposition)."""
+
+    plan: list[str]
+    initial_queries: list[str]
+
+
+class RouterOutput(BaseModel):
+    """Structured response from the router LLM (subsequent-visit decision)."""
+
+    next_action: Literal["search", "synthesize"]
+    rationale: str
+    queries: list[str] = Field(default_factory=list)
+
+
+class GraderOutput(BaseModel):
+    """Structured response from the grader LLM (per-doc judgment).
+
+    `relevance_score` is unbounded here so a slightly out-of-range LLM score
+    does not crash the structured-output path; the grader clamps to [0, 1].
+    """
+
+    relevance_score: float
+    is_grounded: bool
+    rationale: str
+
+
 class ResearchState(TypedDict):
     # Inputs (set once)
     original_query: str

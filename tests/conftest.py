@@ -8,18 +8,51 @@ from typing import Any
 import pytest
 from langchain_core.messages import AIMessage
 from langgraph.checkpoint.memory import MemorySaver
+from pydantic import BaseModel
+
+
+class _StructuredRunnable:
+    """Stub returned by FakeLLM.with_structured_output(schema)."""
+
+    def __init__(self, parent: FakeLLM, schema: type[BaseModel]) -> None:
+        self._parent = parent
+        self._schema = schema
+
+    def invoke(self, messages, **_: Any):  # noqa: ANN001
+        self._parent.calls.append(messages)
+        if not self._parent._queue:
+            # Cannot construct an arbitrary schema without data; raise so the
+            # caller falls back to the unstructured path.
+            raise ValueError(f"FakeLLM has no queued response for {self._schema.__name__}")
+        nxt = self._parent._queue.popleft()
+        if isinstance(nxt, BaseException):
+            raise nxt
+        if isinstance(nxt, self._schema):
+            return nxt
+        if isinstance(nxt, dict):
+            return self._schema(**nxt)
+        # Strings/other -> trigger fallback path in the node under test.
+        raise ValueError(
+            f"FakeLLM cannot coerce {type(nxt).__name__} to {self._schema.__name__}"
+        )
 
 
 class FakeLLM:
     """LLM stub with a programmable response queue.
 
-    Each .invoke() pops the next response. Strings are wrapped in AIMessage.
-    Dicts are JSON-serialized into AIMessage.content (so _safe_json can parse them).
+    Each .invoke() pops the next response. Strings -> AIMessage(text).
+    Dicts -> AIMessage(json) so _safe_json can parse them.
+    BaseException instances are raised to simulate provider errors.
+
+    `.with_structured_output(schema)` returns a runnable whose .invoke()
+    pops the queue and returns a Pydantic instance (constructed from a dict
+    or passed through if already an instance). Strings/non-schema values
+    raise so node code can exercise its fallback path.
     """
 
     def __init__(self, responses: list[Any] | None = None) -> None:
         self._queue: deque = deque(responses or [])
-        self.calls: list[list] = []  # records the messages each invoke received
+        self.calls: list[list] = []
 
     def queue(self, *responses: Any) -> FakeLLM:
         for r in responses:
@@ -31,11 +64,16 @@ class FakeLLM:
         if not self._queue:
             return AIMessage(content="{}")
         nxt = self._queue.popleft()
+        if isinstance(nxt, BaseException):
+            raise nxt
         if isinstance(nxt, dict):
             return AIMessage(content=json.dumps(nxt))
         if isinstance(nxt, AIMessage):
             return nxt
         return AIMessage(content=str(nxt))
+
+    def with_structured_output(self, schema: type[BaseModel]) -> _StructuredRunnable:
+        return _StructuredRunnable(self, schema)
 
 
 @pytest.fixture
