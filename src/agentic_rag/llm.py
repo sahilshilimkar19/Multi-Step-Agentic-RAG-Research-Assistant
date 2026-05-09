@@ -33,6 +33,7 @@ from openai import (
 from openai import (
     RateLimitError as OpenAIRateLimitError,
 )
+from pydantic import SecretStr
 from tenacity import (
     retry,
     retry_if_exception,
@@ -56,25 +57,27 @@ def _is_transient(exc: BaseException) -> bool:
     return isinstance(exc, _TRANSIENT)
 
 
-_RETRY_KW = dict(
-    stop=stop_after_attempt(3),
-    wait=wait_exponential(multiplier=1, min=1, max=8),
-    retry=retry_if_exception(_is_transient),
-    reraise=True,
-)
-
-
 class _RetryingRunnable:
     """Wraps any Runnable; retries .invoke / .ainvoke on transient errors."""
 
     def __init__(self, inner: Any) -> None:
         self._inner = inner
 
-    @retry(**_RETRY_KW)
+    @retry(
+        stop=stop_after_attempt(3),
+        wait=wait_exponential(multiplier=1, min=1, max=8),
+        retry=retry_if_exception(_is_transient),
+        reraise=True,
+    )
     def invoke(self, *args: Any, **kwargs: Any) -> Any:
         return self._inner.invoke(*args, **kwargs)
 
-    @retry(**_RETRY_KW)
+    @retry(
+        stop=stop_after_attempt(3),
+        wait=wait_exponential(multiplier=1, min=1, max=8),
+        retry=retry_if_exception(_is_transient),
+        reraise=True,
+    )
     async def ainvoke(self, *args: Any, **kwargs: Any) -> Any:
         return await self._inner.ainvoke(*args, **kwargs)
 
@@ -119,15 +122,13 @@ def get_llm(model: str, temperature: float = 0.0) -> _RetryingChat:
     settings = get_settings()
     inner: Any
     if model.startswith("claude"):
-        inner = ChatAnthropic(
-            model=model,
-            api_key=settings.anthropic_api_key or None,
-            temperature=temperature,
-        )
+        anthropic_kwargs: dict[str, Any] = {"model": model, "temperature": temperature}
+        if settings.anthropic_api_key:
+            anthropic_kwargs["api_key"] = SecretStr(settings.anthropic_api_key)
+        inner = ChatAnthropic(**anthropic_kwargs)
     else:
-        inner = ChatOpenAI(
-            model=model,
-            api_key=settings.openai_api_key or None,
-            temperature=temperature,
-        )
+        openai_kwargs: dict[str, Any] = {"model": model, "temperature": temperature}
+        if settings.openai_api_key:
+            openai_kwargs["api_key"] = SecretStr(settings.openai_api_key)
+        inner = ChatOpenAI(**openai_kwargs)
     return _RetryingChat(inner)

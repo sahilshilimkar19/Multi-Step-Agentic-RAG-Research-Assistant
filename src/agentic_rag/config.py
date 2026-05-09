@@ -30,4 +30,5 @@ class Settings(BaseSettings):
 
 @lru_cache
 def get_settings() -> Settings:
+    """Return the singleton Settings instance, loading from .env on first call."""
     return Settings()

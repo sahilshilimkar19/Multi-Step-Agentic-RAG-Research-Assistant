@@ -19,6 +19,13 @@ _MAX_CHARS_PER_DOC = 2000
 
 
 def synthesizer_node(state: ResearchState) -> dict[str, Any]:
+    """Render the final markdown report from graded evidence.
+
+    Filters `graded_documents` by relevance threshold and `is_grounded`,
+    sorts by score, caps to the top 30 docs (2k chars per doc), and asks
+    the synthesizer LLM to produce a structured markdown report with
+    [n] citations. Sets `next_action="end"` and the run terminates.
+    """
     iteration = state.get("iteration_count", 0)
     with structlog.contextvars.bound_contextvars(node="synthesizer", iteration=iteration):
         return _synthesizer_body(state)

@@ -15,6 +15,12 @@ def _route_from_planner(state: ResearchState) -> str:
 
 
 def build_graph(checkpointer):
+    """Compose the research StateGraph and compile it with the given checkpointer.
+
+    The caller owns the checkpointer's lifecycle (typically inside a
+    `with SqliteSaver.from_conn_string(...) as cp:` block). Returns a
+    `CompiledStateGraph` ready for `.stream()` or `.invoke()`.
+    """
     g = StateGraph(ResearchState)
 
     g.add_node("planner", planner_node)

@@ -14,6 +14,13 @@ logger = logging.getLogger(__name__)
 
 
 def searcher_node(state: ResearchState) -> dict[str, Any]:
+    """Run every query in `search_queries` in parallel; dedupe by URL.
+
+    Uses ThreadPoolExecutor (max 5 workers) with a 30s per-query timeout.
+    Failed queries are logged but do not abort the iteration. Increments
+    `iteration_count` exactly once per call -- canonical place for the
+    counter that drives the planner's hard-cap termination.
+    """
     iteration = state.get("iteration_count", 0)
     with structlog.contextvars.bound_contextvars(node="searcher", iteration=iteration):
         return _searcher_body(state, iteration)

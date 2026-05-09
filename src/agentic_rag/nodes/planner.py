@@ -49,6 +49,14 @@ def _uncovered_plan_items(plan: list[str], relevant_docs: list[GradedDocument]) 
 
 
 def planner_node(state: ResearchState) -> dict[str, Any]:
+    """Plan on first visit; route on subsequent visits.
+
+    On `iteration_count == 0` and an empty `research_plan`, decomposes the
+    user query into a research plan plus initial search queries via
+    `with_structured_output(PlannerOutput)`. On later visits, evaluates
+    coverage and either chooses `synthesize` (hard cap, sufficiency, or
+    voluntary) or asks the router LLM for fresh queries.
+    """
     iteration = state.get("iteration_count", 0)
     with structlog.contextvars.bound_contextvars(node="planner", iteration=iteration):
         return _planner_body(state, iteration)

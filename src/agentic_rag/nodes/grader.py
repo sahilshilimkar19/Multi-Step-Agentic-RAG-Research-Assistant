@@ -78,6 +78,13 @@ def _grade_one(
 
 
 def grader_node(state: ResearchState) -> dict[str, Any]:
+    """Score each NEW raw document for relevance + groundedness.
+
+    Skips docs that are already in `graded_documents` (URL match), so resumes
+    after a partial run do not re-grade. Grades up to 8 docs in parallel via
+    ThreadPoolExecutor; per-doc failures return None and are dropped.
+    Returns the appended graded_documents list and accumulated token usage.
+    """
     iteration = state.get("iteration_count", 0)
     with structlog.contextvars.bound_contextvars(node="grader", iteration=iteration):
         return _grader_body(state)
