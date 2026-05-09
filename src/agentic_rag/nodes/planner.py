@@ -5,11 +5,10 @@ import json
 import logging
 from typing import Any
 
-from langchain_anthropic import ChatAnthropic
 from langchain_core.messages import AIMessage, HumanMessage, SystemMessage
-from langchain_openai import ChatOpenAI
 
 from agentic_rag.config import get_settings
+from agentic_rag.llm import get_llm
 from agentic_rag.prompts import (
     PLANNER_SYSTEM,
     PLANNER_USER,
@@ -19,22 +18,6 @@ from agentic_rag.prompts import (
 from agentic_rag.state import GradedDocument, ResearchState
 
 logger = logging.getLogger(__name__)
-
-
-def get_llm(model: str, temperature: float = 0.0):
-    """Factory: ChatAnthropic if model starts with 'claude', else ChatOpenAI."""
-    settings = get_settings()
-    if model.startswith("claude"):
-        return ChatAnthropic(
-            model=model,
-            api_key=settings.anthropic_api_key or None,
-            temperature=temperature,
-        )
-    return ChatOpenAI(
-        model=model,
-        api_key=settings.openai_api_key or None,
-        temperature=temperature,
-    )
 
 
 def _safe_json(text: str, default: dict) -> dict:
