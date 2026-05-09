@@ -88,6 +88,7 @@ def patch_get_llm(monkeypatch, fake_llm: FakeLLM):
     def _factory(*_a, **_kw):
         return fake_llm
 
+    import agentic_rag.chat as chat_mod
     import agentic_rag.nodes.grader as grader_mod
     import agentic_rag.nodes.planner as planner_mod
     import agentic_rag.nodes.synthesizer as synth_mod
@@ -95,6 +96,7 @@ def patch_get_llm(monkeypatch, fake_llm: FakeLLM):
     monkeypatch.setattr(planner_mod, "get_llm", _factory)
     monkeypatch.setattr(grader_mod, "get_llm", _factory)
     monkeypatch.setattr(synth_mod, "get_llm", _factory)
+    monkeypatch.setattr(chat_mod, "get_llm", _factory)
     return fake_llm
 
 

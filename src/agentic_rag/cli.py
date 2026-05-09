@@ -12,6 +12,7 @@ from rich.console import Console
 from rich.markdown import Markdown
 from rich.table import Table
 
+from agentic_rag.chat import answer as chat_answer
 from agentic_rag.config import get_settings
 from agentic_rag.graph import build_graph
 from agentic_rag.logging_config import configure_logging
@@ -193,6 +194,40 @@ def resume(thread_id: str = typer.Argument(..., help="Thread ID from a prior run
             console.print(Markdown(report))
             saved = _save_report(thread_id, report)
             console.print(f"\n[green]Saved report to[/] {saved}")
+
+
+@app.command()
+def chat(thread_id: str = typer.Argument(..., help="Thread ID from a prior run")) -> None:
+    """Follow-up Q&A over a thread's cached evidence (no web search)."""
+    settings = get_settings()
+    _setup_logging(settings.log_level, settings.log_json)
+
+    config = {"configurable": {"thread_id": thread_id}}
+    with SqliteSaver.from_conn_string(settings.checkpoint_db) as cp:
+        graph = build_graph(checkpointer=cp)
+        state = graph.get_state(config)
+        original_query = state.values.get("original_query", "")
+    if not original_query:
+        console.print(f"[red]No checkpoint found for thread {thread_id}.[/]")
+        raise typer.Exit(code=1)
+
+    console.print(f"[bold green]Thread:[/] {thread_id}")
+    console.print(f"[bold green]Original query:[/] {original_query}")
+    console.print("[dim]Type a follow-up question or blank line to exit.[/]\n")
+    while True:
+        try:
+            question = typer.prompt("you")
+        except (KeyboardInterrupt, EOFError):
+            console.print("\n[dim]bye[/]")
+            return
+        if not question.strip():
+            console.print("[dim]bye[/]")
+            return
+        text, docs = chat_answer(thread_id, original_query, question)
+        console.rule()
+        console.print(Markdown(text))
+        if docs:
+            console.print(f"[dim]Drew on {len(docs)} cached doc(s).[/]\n")
 
 
 @app.command("list-runs")

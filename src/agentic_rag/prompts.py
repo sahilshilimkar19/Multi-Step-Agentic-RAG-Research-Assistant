@@ -139,3 +139,23 @@ Research plan:
 Graded documents (only those passing the relevance threshold):
 {documents}
 """
+
+
+CHAT_SYSTEM = """You are answering follow-up questions about a research run.
+
+Use ONLY the provided cached evidence to answer. Cite each claim with [n] \
+where n is the document index. If the evidence does not address the user's \
+question, say so explicitly -- do not speculate, do not search the web.
+
+Format your answer as concise markdown. The cached evidence was retrieved \
+during the original research run; treat it as the only source of truth.
+"""
+
+CHAT_USER = """Original research query: {query}
+
+Cached evidence:
+{documents}
+
+User follow-up:
+{question}
+"""
